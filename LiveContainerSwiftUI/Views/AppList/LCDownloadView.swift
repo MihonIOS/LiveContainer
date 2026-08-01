@@ -433,8 +433,25 @@ public final class DownloadHelper: NSObject, ObservableObject {
     }
 
     private func continuedTaskIdentifier() -> String {
+        let permittedPatterns = Bundle.main.object(
+            forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers"
+        ) as? [String] ?? []
+        if let wildcard = permittedPatterns.first(where: {
+            $0.hasSuffix(".download.*") && !$0.contains("$(")
+        }) {
+            return "\(wildcard.dropLast())\(UUID().uuidString)"
+        }
         let bundleID = Bundle.main.bundleIdentifier ?? "com.kdt.LiveContainer"
         return "\(bundleID).download.\(UUID().uuidString)"
+    }
+
+    private func continuedTaskRegistrationError(identifier: String) -> String {
+        let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
+        let permittedPatterns = Bundle.main.object(
+            forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers"
+        ) as? [String] ?? []
+        let permitted = permittedPatterns.isEmpty ? "missing" : permittedPatterns.joined(separator: ", ")
+        return "iOS rejected the Dynamic Island task registration. App ID: \(bundleID). Attempted: \(identifier). Permitted: \(permitted)"
     }
 
     @available(iOS 26.0, *)
@@ -454,7 +471,7 @@ public final class DownloadHelper: NSObject, ObservableObject {
         if registered {
             registeredContinuedTaskIdentifiers.insert(identifier)
         } else {
-            continuedProcessingError = "iOS rejected the Dynamic Island task registration."
+            continuedProcessingError = continuedTaskRegistrationError(identifier: identifier)
         }
         return registered
     }
@@ -604,6 +621,7 @@ extension DownloadHelper: URLSessionDownloadDelegate, URLSessionDelegate {
 
 struct LCDownloadsView: View {
     @EnvironmentObject private var downloadHelper: DownloadHelper
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationView {
@@ -625,6 +643,9 @@ struct LCDownloadsView: View {
             }
             .navigationTitle("Downloads")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("lc.common.close".loc) { dismiss() }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Clear") { downloadHelper.clearFinished() }
                         .disabled(!downloadHelper.downloads.contains(where: {

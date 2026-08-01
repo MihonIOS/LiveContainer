@@ -74,6 +74,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     @State private var helpPresent = false
     
     @State private var customSortViewPresent = false
+    @State private var downloadsPresent = false
     
     @EnvironmentObject private var sharedModel : SharedModel
     @EnvironmentObject private var sharedAppSortManager : LCAppSortManager
@@ -254,13 +255,13 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
 
                 }
                 
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("lc.appList.openLink".loc, systemImage: "link", action: {
                         Task { await onOpenWebViewTapped() }
                     })
-                }
-                
-                ToolbarItem(placement: .topBarTrailing) {
+                    Button("lc.tabView.downloads".loc, systemImage: "arrow.down.circle.fill") {
+                        downloadsPresent = true
+                    }
                     Menu {
                         Picker("Sort by", selection: $sharedAppSortManager.appSortType) {
                             ForEach(AppSortType.allCases, id: \.self) { sortType in
@@ -397,6 +398,10 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         }
         .sheet(isPresented: $customSortViewPresent) {
             LCCustomSortView()
+        }
+        .sheet(isPresented: $downloadsPresent) {
+            LCDownloadsView()
+                .environmentObject(downloadHelper)
         }
         .onAppear() {
             if !isViewAppeared {

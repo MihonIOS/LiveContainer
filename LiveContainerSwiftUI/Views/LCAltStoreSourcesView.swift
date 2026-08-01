@@ -480,6 +480,36 @@ private extension Color {
     }
 }
 
+private struct SourceDownloadFlight: Identifiable {
+    let id = UUID()
+    let iconURL: URL?
+}
+
+private struct SourceGlobalFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero {
+            value = next
+        }
+    }
+}
+
+private extension View {
+    func onSourceGlobalFrameChange(_ action: @escaping (CGRect) -> Void) -> some View {
+        background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: SourceGlobalFramePreferenceKey.self,
+                    value: proxy.frame(in: .global)
+                )
+            }
+        }
+        .onPreferenceChange(SourceGlobalFramePreferenceKey.self, perform: action)
+    }
+}
+
 struct LCSourcesView: View {
     @StateObject private var viewModel = AltStoreSourcesViewModel()
     @State private var errorMessage: String?
@@ -487,8 +517,16 @@ struct LCSourcesView: View {
     @ObservedObject public var searchContext: SearchContext
     @State private var expandedSources: Set<URL> = []
     @State private var isManagingSources = false
+    @State private var downloadsPresent = false
+    @State private var downloadsButtonFrame: CGRect = .zero
+    @State private var downloadFlight: SourceDownloadFlight?
+    @State private var downloadFlightPosition: CGPoint = .zero
+    @State private var downloadFlightScale: CGFloat = 1
+    @State private var downloadFlightOpacity: Double = 0
+    @State private var downloadFlightTask: Task<Void, Never>?
     
     @EnvironmentObject private var sharedModel : SharedModel
+    @EnvironmentObject private var downloadHelper: DownloadHelper
     
     @State private var isViewAppeared = false
     
@@ -517,7 +555,7 @@ struct LCSourcesView: View {
                                     isFiltering: isFiltering,
                                     isExpanded: expandedSources.contains(item.id),
                                     onRefresh: { Task { await viewModel.refreshSource(item) } },
-                                    onInstall: install(app:),
+                                    onInstall: install(app:sourceFrame:),
                                     onRemove: { sourcePendingRemoval = item },
                                     toggleExpanded: { toggleExpansion(for: item.id) }
                                 )
@@ -551,7 +589,14 @@ struct LCSourcesView: View {
                         }
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        downloadsPresent = true
+                    } label: {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .onSourceGlobalFrameChange { downloadsButtonFrame = $0 }
+                    }
+                    .accessibilityLabel(Text("lc.tabView.downloads".loc))
                     Button("lc.sources.addSource".loc, systemImage: "plus") {
                         isManagingSources = true
                     }
@@ -606,6 +651,28 @@ struct LCSourcesView: View {
                     }
                 )
             }
+        }
+        .sheet(isPresented: $downloadsPresent) {
+            LCDownloadsView()
+                .environmentObject(downloadHelper)
+        }
+        .overlay {
+            GeometryReader { proxy in
+                if let downloadFlight {
+                    SourceIconView(url: downloadFlight.iconURL)
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+                        .scaleEffect(downloadFlightScale)
+                        .opacity(downloadFlightOpacity)
+                        .position(
+                            x: downloadFlightPosition.x - proxy.frame(in: .global).minX,
+                            y: downloadFlightPosition.y - proxy.frame(in: .global).minY
+                        )
+                        .id(downloadFlight.id)
+                }
+            }
+            .allowsHitTesting(false)
         }
         .apply {
             if #available(iOS 19.0, *), SharedModel.isLiquidGlassSearchEnabled {
@@ -681,19 +748,57 @@ struct LCSourcesView: View {
     }
     
     @MainActor
-    private func install(app: AltStoreSourceApp) {
+    private func install(app: AltStoreSourceApp, sourceFrame: CGRect) {
         guard let downloadURL = app.latestVersion?.downloadURL else {
             errorMessage = "lc.sources.error.missingDownload".loc
             return
         }
-        withAnimation {
-            DataManager.shared.model.selectedTab = .apps
+        do {
+            try downloadHelper.enqueue(url: downloadURL)
+            animateDownload(iconURL: app.iconURL, from: sourceFrame)
+        } catch {
+            errorMessage = error.localizedDescription
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            NotificationCenter.default.post(name: NSNotification.InstallAppNotification, object: ["url": downloadURL])
+    }
+
+    private func animateDownload(iconURL: URL?, from sourceFrame: CGRect) {
+        guard sourceFrame != .zero else { return }
+
+        downloadFlightTask?.cancel()
+        let start = CGPoint(x: sourceFrame.midX, y: sourceFrame.midY)
+        let fallbackTarget = CGPoint(x: UIScreen.main.bounds.width - 72, y: 88)
+        let target = downloadsButtonFrame == .zero
+            ? fallbackTarget
+            : CGPoint(x: downloadsButtonFrame.midX, y: downloadsButtonFrame.midY)
+        let lift = CGPoint(
+            x: start.x + (target.x - start.x) * 0.45,
+            y: min(start.y - 90, target.y + 70)
+        )
+
+        downloadFlight = SourceDownloadFlight(iconURL: iconURL)
+        downloadFlightPosition = start
+        downloadFlightScale = 1
+        downloadFlightOpacity = 1
+
+        downloadFlightTask = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.22)) {
+                downloadFlightPosition = lift
+                downloadFlightScale = 0.82
+            }
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.34)) {
+                downloadFlightPosition = target
+                downloadFlightScale = 0.32
+                downloadFlightOpacity = 0.15
+            }
+            try? await Task.sleep(nanoseconds: 340_000_000)
+            guard !Task.isCancelled else { return }
+            downloadFlight = nil
+            downloadFlightOpacity = 0
         }
-
-
     }
     
     private func toggleExpansion(for id: URL) {
@@ -861,7 +966,7 @@ private struct AltStoreSourceSectionView: View {
     let isFiltering: Bool
     let isExpanded: Bool
     let onRefresh: () -> Void
-    let onInstall: (AltStoreSourceApp) -> Void
+    let onInstall: (AltStoreSourceApp, CGRect) -> Void
     let onRemove: () -> Void
     let toggleExpanded: () -> Void
     
@@ -951,7 +1056,8 @@ private struct AltStoreSourceSectionView: View {
 private struct LCSourceAppBanner: View {
     let app: AltStoreSourceApp
     let source: AltStoreSource
-    let installAction: (AltStoreSourceApp) -> Void
+    let installAction: (AltStoreSourceApp, CGRect) -> Void
+    @State private var installButtonFrame: CGRect = .zero
     
     @AppStorage("dynamicColors") private var dynamicColors = true
     @Environment(\.colorScheme) var colorScheme
@@ -1025,7 +1131,7 @@ private struct LCSourceAppBanner: View {
             .allowsHitTesting(false)
             Spacer()
             Button {
-                installAction(app)
+                installAction(app, installButtonFrame)
             } label: {
                 Text("lc.common.install".loc)
                     .bold()
@@ -1043,6 +1149,7 @@ private struct LCSourceAppBanner: View {
                 Capsule().fill(dynamicColors ? primaryColor : Color("FontColor"))
             )
             .clipShape(Capsule())
+            .onSourceGlobalFrameChange { installButtonFrame = $0 }
         }
         .padding()
         .frame(height: 88)

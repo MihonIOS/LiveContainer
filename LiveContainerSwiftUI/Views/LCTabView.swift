@@ -51,9 +51,6 @@ struct LCTabView: View {
                     Tab("lc.tabView.apps".loc, systemImage: "square.stack.3d.up.fill", value: LCTabIdentifier.apps) {
                         appListView
                     }
-                    Tab("lc.tabView.downloads".loc, systemImage: "arrow.down.circle.fill", value: LCTabIdentifier.downloads) {
-                        LCDownloadsView()
-                    }
                     if DataManager.shared.model.multiLCStatus != 2 {
                         Tab("lc.tabView.tweaks".loc, systemImage: "wrench.and.screwdriver", value: LCTabIdentifier.tweaks) {
                             LCTweaksView()
@@ -87,11 +84,6 @@ struct LCTabView: View {
                             Label("lc.tabView.apps".loc, systemImage: "square.stack.3d.up.fill")
                         }
                         .tag(LCTabIdentifier.apps)
-                    LCDownloadsView()
-                        .tabItem {
-                            Label("lc.tabView.downloads".loc, systemImage: "arrow.down.circle.fill")
-                        }
-                        .tag(LCTabIdentifier.downloads)
                     if DataManager.shared.model.multiLCStatus != 2 {
                         LCTweaksView()
                             .tabItem{
