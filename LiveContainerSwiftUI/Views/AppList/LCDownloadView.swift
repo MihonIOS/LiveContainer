@@ -78,6 +78,16 @@ public final class DownloadHelper: NSObject, ObservableObject {
     private var continuedTasks: [UUID: AnyObject] = [:]
     private var registeredContinuedTaskIdentifiers = Set<String>()
     private var lastPersistDates: [UUID: Date] = [:]
+    private var lastContinuedTaskUpdateDates: [UUID: Date] = [:]
+
+    private let megabyteFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB]
+        formatter.countStyle = .file
+        formatter.includesUnit = true
+        formatter.isAdaptive = false
+        return formatter
+    }()
 
     private lazy var session: URLSession = {
         let identifier = "\(Bundle.main.bundleIdentifier ?? "com.kdt.LiveContainer").downloads"
@@ -486,7 +496,7 @@ public final class DownloadHelper: NSObject, ObservableObject {
         let request = BGContinuedProcessingTaskRequest(
             identifier: identifier,
             title: "Downloading \(item.displayName)",
-            subtitle: "LiveContainer"
+            subtitle: continuedTaskSubtitle(for: item)
         )
         request.strategy = .fail
         do {
@@ -512,15 +522,41 @@ public final class DownloadHelper: NSObject, ObservableObject {
                 self?.cancel(id: downloadID)
             }
         }
+        updateContinuedTaskProgress(id: downloadID, forceUpdate: true)
     }
 
-    private func updateContinuedTaskProgress(id: UUID, progress: Double) {
+    private func continuedTaskSubtitle(for item: LCDownloadItem) -> String {
+        let downloaded = megabyteFormatter.string(fromByteCount: max(item.downloadedSize, 0))
+        guard item.totalSize > 0 else {
+            return "\(downloaded) downloaded"
+        }
+
+        let total = megabyteFormatter.string(fromByteCount: item.totalSize)
+        return "\(downloaded) / \(total)"
+    }
+
+    private func updateContinuedTaskProgress(id: UUID, forceUpdate: Bool = false) {
         guard #available(iOS 26.0, *),
+              let index = index(of: id),
               let task = continuedTasks[id] as? BGContinuedProcessingTask else { return }
-        task.progress.completedUnitCount = Int64(min(max(progress, 0), 1) * 1_000)
+
+        let now = Date()
+        guard forceUpdate ||
+                now.timeIntervalSince(lastContinuedTaskUpdateDates[id] ?? .distantPast) >= 1 else {
+            return
+        }
+        lastContinuedTaskUpdateDates[id] = now
+
+        let item = downloads[index]
+        task.progress.completedUnitCount = Int64(item.progress * 1_000)
+        task.updateTitle(
+            "Downloading \(item.displayName)",
+            subtitle: continuedTaskSubtitle(for: item)
+        )
     }
 
     private func finishContinuedTask(id: UUID, success: Bool) {
+        lastContinuedTaskUpdateDates.removeValue(forKey: id)
         guard #available(iOS 26.0, *),
               let task = continuedTasks.removeValue(forKey: id) as? BGContinuedProcessingTask else { return }
         task.setTaskCompleted(success: success)
@@ -542,7 +578,7 @@ extension DownloadHelper: URLSessionDownloadDelegate, URLSessionDelegate {
         downloads[index].downloadedSize = totalBytesWritten
         downloads[index].totalSize = max(totalBytesExpectedToWrite, 0)
         downloads[index].updatedAt = Date()
-        updateContinuedTaskProgress(id: id, progress: downloads[index].progress)
+        updateContinuedTaskProgress(id: id)
 
         let now = Date()
         if now.timeIntervalSince(lastPersistDates[id] ?? .distantPast) >= 1 {
@@ -584,7 +620,7 @@ extension DownloadHelper: URLSessionDownloadDelegate, URLSessionDelegate {
             downloads[index].errorDescription = nil
             downloads[index].updatedAt = Date()
             persistState()
-            updateContinuedTaskProgress(id: id, progress: 1)
+            updateContinuedTaskProgress(id: id, forceUpdate: true)
             finishContinuedTask(id: id, success: true)
             sendNotification(title: "Download complete", body: suggestedName)
             requestNextInstallationIfPossible()
