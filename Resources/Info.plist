@@ -206,7 +206,9 @@
 	<true/>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER).*</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).download.*</string>
+		<!-- iLoader appends the signing Team ID after Xcode expands PRODUCT_BUNDLE_IDENTIFIER. -->
+		<string>com.kdt.livecontainer.KHL5QPAAAX.download.*</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

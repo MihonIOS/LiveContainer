@@ -310,7 +310,7 @@
     infoDict[@"CFBundleIcons~ipad"][@"CFBundlePrimaryIcon"][@"CFBundleIconFiles"][1] = @"AppIconGrey76x76";
     [infoDict addEntriesFromDictionary:extraInfoDict];
     infoDict[@"BGTaskSchedulerPermittedIdentifiers"] = @[
-        [NSString stringWithFormat:@"%@.*", infoDict[@"CFBundleIdentifier"]]
+        [NSString stringWithFormat:@"%@.download.*", infoDict[@"CFBundleIdentifier"]]
     ];
     
     // reset a executable name so they don't look the same on the log
