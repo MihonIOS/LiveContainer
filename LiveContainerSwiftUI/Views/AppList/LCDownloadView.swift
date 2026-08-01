@@ -69,6 +69,7 @@ public final class DownloadHelper: NSObject, ObservableObject {
     static let installRequestedNotification = Notification.Name("LCInstallDownloadedIPA")
 
     @Published private(set) var downloads: [LCDownloadItem] = []
+    @Published private(set) var continuedProcessingError: String?
 
     private var backgroundEventsCompletionHandler: (() -> Void)?
     private var activeTasks: [UUID: URLSessionDownloadTask] = [:]
@@ -354,8 +355,9 @@ public final class DownloadHelper: NSObject, ObservableObject {
         task.resume()
 
         if submitContinuedTask, #available(iOS 26.0, *) {
-            registerContinuedProcessingHandler(for: downloads[index])
-            submitContinuedProcessingTask(for: downloads[index])
+            if registerContinuedProcessingHandler(for: downloads[index]) {
+                submitContinuedProcessingTask(for: downloads[index])
+            }
         }
     }
 
@@ -436,22 +438,31 @@ public final class DownloadHelper: NSObject, ObservableObject {
     }
 
     @available(iOS 26.0, *)
-    private func registerContinuedProcessingHandler(for item: LCDownloadItem) {
-        guard let identifier = item.continuedTaskIdentifier,
-              !registeredContinuedTaskIdentifiers.contains(identifier) else { return }
-        registeredContinuedTaskIdentifiers.insert(identifier)
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { [weak self] task in
+    @discardableResult
+    private func registerContinuedProcessingHandler(for item: LCDownloadItem) -> Bool {
+        guard let identifier = item.continuedTaskIdentifier else { return false }
+        if registeredContinuedTaskIdentifiers.contains(identifier) {
+            return true
+        }
+        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { [weak self] task in
             guard let continuedTask = task as? BGContinuedProcessingTask else {
                 task.setTaskCompleted(success: false)
                 return
             }
             self?.handleContinuedProcessingTask(continuedTask, downloadID: item.id)
         }
+        if registered {
+            registeredContinuedTaskIdentifiers.insert(identifier)
+        } else {
+            continuedProcessingError = "iOS rejected the Dynamic Island task registration."
+        }
+        return registered
     }
 
     @available(iOS 26.0, *)
     private func submitContinuedProcessingTask(for item: LCDownloadItem) {
         guard let identifier = item.continuedTaskIdentifier else { return }
+        continuedProcessingError = nil
         let request = BGContinuedProcessingTaskRequest(
             identifier: identifier,
             title: "Downloading \(item.displayName)",
@@ -461,6 +472,7 @@ public final class DownloadHelper: NSObject, ObservableObject {
         do {
             try BGTaskScheduler.shared.submit(request)
         } catch {
+            continuedProcessingError = "Dynamic Island task failed: \(error.localizedDescription)"
             NSLog("[LC] Could not start continued processing UI: \(error)")
         }
     }
@@ -471,6 +483,7 @@ public final class DownloadHelper: NSObject, ObservableObject {
             task.setTaskCompleted(success: false)
             return
         }
+        continuedProcessingError = nil
         continuedTasks[downloadID] = task
         task.progress.totalUnitCount = 1_000
         task.progress.completedUnitCount = Int64(downloads[index].progress * 1_000)
@@ -595,6 +608,11 @@ struct LCDownloadsView: View {
     var body: some View {
         NavigationView {
             List {
+                if let error = downloadHelper.continuedProcessingError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
                 if downloadHelper.downloads.isEmpty {
                     Text("Downloads started from Sources will appear here.")
                         .foregroundColor(.secondary)
