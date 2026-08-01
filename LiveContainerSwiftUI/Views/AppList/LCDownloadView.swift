@@ -607,10 +607,11 @@ struct LCDownloadsView: View {
             }
             .navigationTitle("Downloads")
             .toolbar {
-                if downloadHelper.downloads.contains(where: { $0.status == .installed || $0.status == .cancelled }) {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Clear") { downloadHelper.clearFinished() }
-                    }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Clear") { downloadHelper.clearFinished() }
+                        .disabled(!downloadHelper.downloads.contains(where: {
+                            $0.status == .installed || $0.status == .cancelled
+                        }))
                 }
             }
         }
