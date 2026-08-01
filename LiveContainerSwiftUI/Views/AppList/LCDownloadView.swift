@@ -117,6 +117,12 @@ public final class DownloadHelper: NSObject, ObservableObject {
                 downloads[index].errorDescription = "The downloaded file is missing. Tap Retry to download it again."
             }
         }
+        for index in downloads.indices
+        where downloads[index].status == .downloading || downloads[index].status == .paused {
+            if !continuedTaskIdentifierMatchesCurrentBundle(downloads[index].continuedTaskIdentifier) {
+                downloads[index].continuedTaskIdentifier = continuedTaskIdentifier()
+            }
+        }
         persistState()
 
         if #available(iOS 26.0, *) {
@@ -433,16 +439,13 @@ public final class DownloadHelper: NSObject, ObservableObject {
     }
 
     private func continuedTaskIdentifier() -> String {
-        let permittedPatterns = Bundle.main.object(
-            forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers"
-        ) as? [String] ?? []
-        if let wildcard = permittedPatterns.first(where: {
-            $0.hasSuffix(".download.*") && !$0.contains("$(")
-        }) {
-            return "\(wildcard.dropLast())\(UUID().uuidString)"
-        }
         let bundleID = Bundle.main.bundleIdentifier ?? "com.kdt.LiveContainer"
         return "\(bundleID).download.\(UUID().uuidString)"
+    }
+
+    private func continuedTaskIdentifierMatchesCurrentBundle(_ identifier: String?) -> Bool {
+        guard let identifier, let bundleID = Bundle.main.bundleIdentifier else { return false }
+        return identifier.hasPrefix("\(bundleID).download.")
     }
 
     private func continuedTaskRegistrationError(identifier: String) -> String {

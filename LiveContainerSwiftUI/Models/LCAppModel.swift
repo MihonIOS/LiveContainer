@@ -337,7 +337,7 @@ class LCAppModel: ObservableObject, Hashable {
         }
         if jitNeeded || is32bit {
             if multitask, #available(iOS 17.4, *) {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let pid = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, Error>) in
                     LCUtils.launchMultitaskGuestApp(appInfo.displayName()) { pidNumber, error in
                         if let error {
                             continuation.resume(throwing: error)
@@ -347,15 +347,13 @@ class LCAppModel: ObservableObject, Hashable {
                             continuation.resume(throwing: "Failed to obtain PID from LiveProcess")
                             return
                         }
-                        Task {
-                            if let scriptData = self.jitLaunchScriptJs, !scriptData.isEmpty {
-                                await self.delegate?.jitLaunch(withPID: pidNumber.intValue, withScript: scriptData, appName: self.appInfo.displayName())
-                            } else {
-                                await self.delegate?.jitLaunch(withPID: pidNumber.intValue, withScript: nil, appName: self.appInfo.displayName())
-                            }
-                            continuation.resume()
-                        }
+                        continuation.resume(returning: pidNumber.intValue)
                     }
+                }
+                if let scriptData = jitLaunchScriptJs, !scriptData.isEmpty {
+                    await delegate?.jitLaunch(withPID: pid, withScript: scriptData, appName: appInfo.displayName())
+                } else {
+                    await delegate?.jitLaunch(withPID: pid, withScript: nil, appName: appInfo.displayName())
                 }
             } else {
                 // Non-multitask JIT flow remains unchanged
@@ -526,7 +524,7 @@ class LCAppModel: ObservableObject, Hashable {
             if !found {
                 found = MultitaskDockManager.shared.bringMultitaskViewToFront(uuid: dataUUID)
             }
-            if let urlScheme, !found  {
+            if urlScheme != nil, !found  {
                 UserDefaults.standard.removeObject(forKey: "launchAppUrlScheme")
             }
             return found

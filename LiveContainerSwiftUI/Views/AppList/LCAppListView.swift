@@ -1148,11 +1148,11 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 if jitEnabler == .StosDebug || jitEnabler == .StosDebugLC {
                     let encoded = encodedData.map { "&script=\($0)" } ?? ""
                     if jitEnabler == .StosDebugLC {
-                        if let app = sharedModel.apps.first(where: { app in
+                        if sharedModel.apps.contains(where: { app in
                             return app.appInfo.urlSchemes().contains("stosdebug") &&
                             (sharedModel.multiLCStatus != 2 || app.appInfo.isShared)
                         }) {
-                            if var url = URL(string: "stosdebug://enableJIT?bundleId=\(Bundle.main.bundleIdentifier!)&appName=\(appName)&pid=\(pid)&relaunchApp=false& forcePID=true\(encoded)") {
+                            if let url = URL(string: "stosdebug://enableJIT?bundleId=\(Bundle.main.bundleIdentifier!)&appName=\(appName)&pid=\(pid)&relaunchApp=false& forcePID=true\(encoded)") {
                                 Task { await openWebView(urlString: url.absoluteString) }
                             }
                         } else {
@@ -1161,7 +1161,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                             return
                         }
                     } else {
-                        if var url = URL(string: "stosdebug://enableJIT?bundleId=\(Bundle.main.bundleIdentifier!)&appName=\(appName)&pid=\(pid)&forcePID=true\(encoded)") {
+                        if let url = URL(string: "stosdebug://enableJIT?bundleId=\(Bundle.main.bundleIdentifier!)&appName=\(appName)&pid=\(pid)&forcePID=true\(encoded)") {
                             UIApplication.shared.open(url)
                         }
                     }
@@ -1171,7 +1171,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 let encoded = encodedData.map { "&script-data=\($0)" } ?? ""
                 if let url = URL(string: "stikjit://enable-jit?bundle-id=\(Bundle.main.bundleIdentifier!)&pid=\(pid)\(encoded)") {
                     if jitEnabler == .StikJITLC {
-                        if let app = sharedModel.apps.first(where: { app in
+                        if sharedModel.apps.contains(where: { app in
                             return app.appInfo.urlSchemes().contains("stikjit") &&
                             (sharedModel.multiLCStatus != 2 || app.appInfo.isShared)
                         }) {
