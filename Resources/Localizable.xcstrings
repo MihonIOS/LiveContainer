@@ -31078,6 +31078,17 @@
         }
       }
     },
+    "lc.tabView.downloads" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Downloads"
+          }
+        }
+      }
+    },
     "lc.tabView.apps" : {
       "extractionState" : "manual",
       "localizations" : {

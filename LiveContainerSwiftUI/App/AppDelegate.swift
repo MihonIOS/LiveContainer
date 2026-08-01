@@ -7,6 +7,7 @@ import Intents
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? ) -> Bool {
         application.shortcutItems = nil
         UserDefaults.standard.removeObject(forKey: "LCNeedToAcquireJIT")
+        _ = DownloadHelper.shared
         
         NotificationCenter.default.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { _ in
             // Fix launching app if user opens JIT waiting dialog and kills the app. Won't trigger normally.
@@ -38,6 +39,14 @@ import Intents
         let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
         configuration.delegateClass = SceneDelegate.self
         return configuration
+    }
+
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        DownloadHelper.shared.setBackgroundEventsCompletionHandler(completionHandler)
     }
     
     func application(_ application: UIApplication, handlerFor intent: INIntent) -> Any? {

@@ -84,6 +84,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     @State private var isViewAppeared = false
     
     @ObservedObject var searchContext: SearchContext
+    let handlesDownloadedInstalls: Bool
     var sortedApps: [LCAppModel] {
         return sharedAppSortManager.sortedApps
     }
@@ -116,9 +117,10 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         }
     }
     
-    init(searchContext: SearchContext) {
+    init(searchContext: SearchContext, handlesDownloadedInstalls: Bool = true) {
         _installOptions = State(initialValue: [])
         self.searchContext = searchContext
+        self.handlesDownloadedInstalls = handlesDownloadedInstalls
     }
     
     var body: some View {
@@ -432,6 +434,14 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 Task { await installFromUrl(urlStr: installUrl.absoluteString) }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: DownloadHelper.installRequestedNotification)) { notification in
+            guard handlesDownloadedInstalls else { return }
+            guard let payload = notification.object as? [String: Any],
+                  let id = payload["id"] as? UUID,
+                  let url = payload["url"] as? URL else { return }
+            guard downloadHelper.claimInstallation(id: id) else { return }
+            Task { await installDownloadedIPA(id: id, url: url) }
+        }
         .apply {
             if #available(iOS 19.0, *), SharedModel.isLiquidGlassSearchEnabled {
                 $0
@@ -594,7 +604,8 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         extract(path, destination, progress)
     }
     
-    func installIpaFile(_ url:URL) async throws {
+    @discardableResult
+    func installIpaFile(_ url:URL) async throws -> Bool {
         let fm = FileManager()
         
         let installProgress = Progress.discreteProgress(totalUnitCount: 100)
@@ -651,13 +662,13 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 do {
                     if !(try await LCUtils.authenticateUser()) {
                         self.installprogressVisible = false
-                        return
+                        return false
                     }
                 } catch {
                     errorInfo = error.localizedDescription
                     errorShow = true
                     self.installprogressVisible = false
-                    return
+                    return false
                 }
             }
             
@@ -676,7 +687,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 // user cancelled
                 self.installprogressVisible = false
                 try fm.removeItem(at: payloadPath)
-                return
+                return false
             }
             
             if let appToReplace = installOptionChosen.appToReplace, appToReplace.uiIsShared {
@@ -698,7 +709,7 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         guard let finalNewApp else {
             errorInfo = "lc.appList.appInfoInitError".loc
             errorShow = true
-            return
+            return false
         }
         
         // patch and sign it
@@ -784,6 +795,28 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
 
             self.installprogressVisible = false
         }
+        return true
+    }
+
+    func installDownloadedIPA(id: UUID, url: URL) async {
+        guard !installprogressVisible else {
+            downloadHelper.deferInstallation(id: id)
+            return
+        }
+
+        installprogressVisible = true
+        do {
+            if try await installIpaFile(url) {
+                downloadHelper.markInstallationSucceeded(id: id)
+            } else {
+                downloadHelper.deferInstallation(id: id)
+            }
+        } catch {
+            errorInfo = error.localizedDescription
+            errorShow = true
+            installprogressVisible = false
+            downloadHelper.markInstallationFailed(id: id, error: error)
+        }
     }
     
     func startInstallFromUrl() async {
@@ -864,11 +897,6 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
     }
     
     func installFromUrl(urlStr: String) async {
-        // ignore any install request if we are installing another app
-        if self.installprogressVisible {
-            return
-        }
-        
         if sharedModel.multiLCStatus == 2 {
             errorInfo = "lc.appList.manageInPrimaryTip".loc
             errorShow = true
@@ -878,6 +906,21 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
         guard var installUrl = URL(string: urlStr) else {
             errorInfo = "lc.appList.urlInvalidError".loc
             errorShow = true
+            return
+        }
+
+        if !installUrl.isFileURL {
+            do {
+                try downloadHelper.enqueue(url: installUrl)
+            } catch {
+                errorInfo = error.localizedDescription
+                errorShow = true
+            }
+            return
+        }
+
+        // Local imports still use the existing foreground installer.
+        if self.installprogressVisible {
             return
         }
         
@@ -954,24 +997,6 @@ struct LCAppListView : View, LCAppBannerDelegate, LCAppModelDelegate {
                 errorShow = true
             }
             return
-        }
-        
-        do {
-            let fileManager = FileManager.default
-            let destinationURL = fileManager.temporaryDirectory.appendingPathComponent(installUrl.lastPathComponent)
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.removeItem(at: destinationURL)
-            }
-            
-            try await downloadHelper.download(url: installUrl, to: destinationURL)
-            if downloadHelper.cancelled {
-                return
-            }
-            try await installIpaFile(destinationURL)
-            try fileManager.removeItem(at: destinationURL)
-        } catch {
-            errorInfo = error.localizedDescription
-            errorShow = true
         }
         
     }

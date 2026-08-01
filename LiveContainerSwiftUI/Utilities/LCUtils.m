@@ -309,6 +309,9 @@
     infoDict[@"CFBundleIcons~ipad"][@"CFBundlePrimaryIcon"][@"CFBundleIconFiles"][0] = @"AppIconGrey60x60";
     infoDict[@"CFBundleIcons~ipad"][@"CFBundlePrimaryIcon"][@"CFBundleIconFiles"][1] = @"AppIconGrey76x76";
     [infoDict addEntriesFromDictionary:extraInfoDict];
+    infoDict[@"BGTaskSchedulerPermittedIdentifiers"] = @[
+        [NSString stringWithFormat:@"%@.download.*", infoDict[@"CFBundleIdentifier"]]
+    ];
     
     // reset a executable name so they don't look the same on the log
     NSURL* appBundlePath = [tmpPayloadPath URLByAppendingPathComponent:@"App.app"];

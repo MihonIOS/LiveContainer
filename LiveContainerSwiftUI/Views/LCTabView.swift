@@ -19,7 +19,7 @@ struct LCTabView: View {
     @EnvironmentObject var sceneDelegate: SceneDelegate
     @State var shouldToggleMainWindowOpen = false
     @Environment(\.scenePhase) var scenePhase
-    @StateObject var downloadHelper = DownloadHelper()
+    @StateObject var downloadHelper = DownloadHelper.shared
     
     @StateObject var searchContextAppList = SearchContext()
     @StateObject var searchContextSource = SearchContext()
@@ -28,6 +28,10 @@ struct LCTabView: View {
     
     private var appListView: LCAppListView {
         LCAppListView(searchContext: searchContextAppList)
+    }
+
+    private var searchAppListView: LCAppListView {
+        LCAppListView(searchContext: searchContextAppList, handlesDownloadedInstalls: false)
     }
     
     private var sourcesView: LCSourcesView {
@@ -47,6 +51,9 @@ struct LCTabView: View {
                     Tab("lc.tabView.apps".loc, systemImage: "square.stack.3d.up.fill", value: LCTabIdentifier.apps) {
                         appListView
                     }
+                    Tab("lc.tabView.downloads".loc, systemImage: "arrow.down.circle.fill", value: LCTabIdentifier.downloads) {
+                        LCDownloadsView()
+                    }
                     if DataManager.shared.model.multiLCStatus != 2 {
                         Tab("lc.tabView.tweaks".loc, systemImage: "wrench.and.screwdriver", value: LCTabIdentifier.tweaks) {
                             LCTweaksView()
@@ -60,7 +67,7 @@ struct LCTabView: View {
                             sourcesView
                                 .searchable(text: $searchContextSource.query)
                         } else {
-                            appListView
+                            searchAppListView
                                 .searchable(text: $searchContextAppList.query)
                         }
 
@@ -80,6 +87,11 @@ struct LCTabView: View {
                             Label("lc.tabView.apps".loc, systemImage: "square.stack.3d.up.fill")
                         }
                         .tag(LCTabIdentifier.apps)
+                    LCDownloadsView()
+                        .tabItem {
+                            Label("lc.tabView.downloads".loc, systemImage: "arrow.down.circle.fill")
+                        }
+                        .tag(LCTabIdentifier.downloads)
                     if DataManager.shared.model.multiLCStatus != 2 {
                         LCTweaksView()
                             .tabItem{
@@ -96,7 +108,6 @@ struct LCTabView: View {
                 }
             }
         }
-        .downloadAlert(helper: downloadHelper)
         .environmentObject(downloadHelper)
         .alert("lc.common.error".loc, isPresented: $errorShow){
             Button("lc.common.ok".loc, action: {
@@ -140,12 +151,27 @@ struct LCTabView: View {
             checkAndSaveBundleId()
             checkGetTaskAllow()
             checkPrivateContainerBookmark()
+            downloadHelper.requestNextInstallationIfPossible()
         }
         .onReceive(pub) { out in
             if let scene1 = sceneDelegate.window?.windowScene, let scene2 = out.object as? UIWindowScene, scene1 == scene2 {
                 if shouldToggleMainWindowOpen {
                     DataManager.shared.model.mainWindowOpened = false
                 }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: DownloadHelper.installReadyNotification)) { notification in
+            sharedModel.selectedTab = .apps
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                NotificationCenter.default.post(
+                    name: DownloadHelper.installRequestedNotification,
+                    object: notification.object
+                )
+            }
+        }
+        .onChange(of: scenePhase) { newPhase in
+            if newPhase == .active {
+                downloadHelper.requestNextInstallationIfPossible()
             }
         }
         .onChange(of: sharedModel.selectedTab) { newValue in
