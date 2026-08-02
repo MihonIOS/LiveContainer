@@ -186,7 +186,7 @@ public final class DownloadHelper: NSObject, ObservableObject {
             downloads[index].status = .paused
             downloads[index].updatedAt = Date()
             persistState()
-            finishContinuedTask(id: id, success: true)
+            finishContinuedTask(id: id)
             return
         }
 
@@ -194,7 +194,7 @@ public final class DownloadHelper: NSObject, ObservableObject {
         downloads[index].status = .paused
         downloads[index].updatedAt = Date()
         persistState()
-        finishContinuedTask(id: id, success: true)
+        finishContinuedTask(id: id)
 
         task.cancel(byProducingResumeData: { [weak self] data in
             DispatchQueue.main.async {
@@ -231,17 +231,17 @@ public final class DownloadHelper: NSObject, ObservableObject {
 
     func cancel(id: UUID) {
         guard let index = index(of: id) else { return }
+        downloads[index].status = .cancelled
         activeTasks[id]?.cancel()
         activeTasks.removeValue(forKey: id)
-        finishContinuedTask(id: id, success: false)
         removeLocalFile(for: downloads[index])
-        downloads[index].status = .cancelled
         downloads[index].resumeData = nil
         downloads[index].localFileName = nil
         downloads[index].taskIdentifier = nil
         downloads[index].errorDescription = nil
         downloads[index].updatedAt = Date()
         persistState()
+        finishContinuedTask(id: id)
     }
 
     func retry(id: UUID) {
@@ -509,8 +509,12 @@ public final class DownloadHelper: NSObject, ObservableObject {
 
     @available(iOS 26.0, *)
     private func handleContinuedProcessingTask(_ task: BGContinuedProcessingTask, downloadID: UUID) {
-        guard let index = index(of: downloadID), downloads[index].status == .downloading else {
+        guard let index = index(of: downloadID) else {
             task.setTaskCompleted(success: false)
+            return
+        }
+        guard downloads[index].status == .downloading else {
+            completeContinuedTask(task, for: downloads[index])
             return
         }
         continuedProcessingError = nil
@@ -555,11 +559,41 @@ public final class DownloadHelper: NSObject, ObservableObject {
         )
     }
 
-    private func finishContinuedTask(id: UUID, success: Bool) {
+    private func continuedTaskTerminalPresentation(for item: LCDownloadItem) -> (
+        title: String,
+        subtitle: String,
+        success: Bool
+    ) {
+        switch item.status {
+        case .paused:
+            return ("Download paused", continuedTaskSubtitle(for: item), false)
+        case .failed:
+            return ("Download failed", item.errorDescription ?? item.displayName, false)
+        case .cancelled:
+            return ("Download cancelled", item.displayName, false)
+        case .downloaded, .installing, .installed:
+            return ("Download complete", item.displayName, true)
+        case .downloading:
+            return ("Download stopped", continuedTaskSubtitle(for: item), false)
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private func completeContinuedTask(_ task: BGContinuedProcessingTask, for item: LCDownloadItem) {
+        let presentation = continuedTaskTerminalPresentation(for: item)
+        task.updateTitle(presentation.title, subtitle: presentation.subtitle)
+        task.setTaskCompleted(success: presentation.success)
+    }
+
+    private func finishContinuedTask(id: UUID) {
         lastContinuedTaskUpdateDates.removeValue(forKey: id)
         guard #available(iOS 26.0, *),
               let task = continuedTasks.removeValue(forKey: id) as? BGContinuedProcessingTask else { return }
-        task.setTaskCompleted(success: success)
+        guard let index = index(of: id) else {
+            task.setTaskCompleted(success: false)
+            return
+        }
+        completeContinuedTask(task, for: downloads[index])
     }
 }
 
@@ -621,7 +655,7 @@ extension DownloadHelper: URLSessionDownloadDelegate, URLSessionDelegate {
             downloads[index].updatedAt = Date()
             persistState()
             updateContinuedTaskProgress(id: id, forceUpdate: true)
-            finishContinuedTask(id: id, success: true)
+            finishContinuedTask(id: id)
             sendNotification(title: "Download complete", body: suggestedName)
             requestNextInstallationIfPossible()
         } catch {
@@ -653,7 +687,7 @@ extension DownloadHelper: URLSessionDownloadDelegate, URLSessionDelegate {
         downloads[index].errorDescription = description
         downloads[index].updatedAt = Date()
         persistState()
-        finishContinuedTask(id: id, success: false)
+        finishContinuedTask(id: id)
         sendNotification(title: "Download failed", body: "\(downloads[index].displayName): \(description)")
     }
 }
