@@ -14,16 +14,16 @@ struct LCTabView: View {
     @State var errorInfo = ""
     
     @State var previousSelectedTab : LCTabIdentifier = .apps
-    
+
     @EnvironmentObject var sharedModel : SharedModel
     @EnvironmentObject var sceneDelegate: SceneDelegate
     @State var shouldToggleMainWindowOpen = false
     @Environment(\.scenePhase) var scenePhase
     @StateObject var downloadHelper = DownloadHelper.shared
-    
+
     @StateObject var searchContextAppList = SearchContext()
     @StateObject var searchContextSource = SearchContext()
-    
+
     let pub = NotificationCenter.default.publisher(for: UIScene.didDisconnectNotification)
     
     private var appListView: LCAppListView {
@@ -33,12 +33,11 @@ struct LCTabView: View {
     private var searchAppListView: LCAppListView {
         LCAppListView(searchContext: searchContextAppList, handlesDownloadedInstalls: false)
     }
-    
+
     private var sourcesView: LCSourcesView {
         LCSourcesView(searchContext: searchContextSource)
     }
 
-    
     var body: some View {
         Group {
             if #available(iOS 19.0, *), SharedModel.isLiquidGlassSearchEnabled {
@@ -91,7 +90,7 @@ struct LCTabView: View {
                             }
                             .tag(LCTabIdentifier.tweaks)
                     }
-                    
+
                     LCSettingsView()
                         .tabItem {
                             Label("lc.tabView.settings".loc, systemImage: "gearshape.fill")

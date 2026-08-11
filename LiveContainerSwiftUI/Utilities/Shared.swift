@@ -91,7 +91,7 @@ class SharedModel: ObservableObject {
     static let isLiquidGlassSearchEnabled = {
             return isLiquidGlassEnabled && UIDevice.current.userInterfaceIdiom == .phone
     }()
-    
+
     var mainWindowOpened = false
     
     public static let keychainAccessGroupCount = 128

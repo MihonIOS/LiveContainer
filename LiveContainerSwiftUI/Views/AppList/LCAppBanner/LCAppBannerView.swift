@@ -11,6 +11,7 @@ final class LCAppBannerRootView: UIView {
 
     let runControl = LCAppBannerRunControl()
 
+    private let visualBackgroundView = UIView()
     private let iconImageView = UIImageView()
     private let nameLabel = UILabel()
     private let versionLabel = UILabel()
@@ -41,9 +42,15 @@ final class LCAppBannerRootView: UIView {
     }
 
     private func setupView() {
+        isOpaque = false
+        backgroundColor = .clear
         layer.cornerRadius = 22
         layer.cornerCurve = .continuous
         clipsToBounds = true
+
+        visualBackgroundView.translatesAutoresizingMaskIntoConstraints = false
+        visualBackgroundView.isOpaque = false
+        visualBackgroundView.isUserInteractionEnabled = false
 
         iconImageView.translatesAutoresizingMaskIntoConstraints = false
         iconImageView.contentMode = .scaleAspectFit
@@ -87,11 +94,17 @@ final class LCAppBannerRootView: UIView {
         detailStack.isAccessibilityElement = true
 
         runControl.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(visualBackgroundView)
         addSubview(iconImageView)
         addSubview(detailStack)
         addSubview(runControl)
 
         NSLayoutConstraint.activate([
+            visualBackgroundView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            visualBackgroundView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            visualBackgroundView.topAnchor.constraint(equalTo: topAnchor),
+            visualBackgroundView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
             iconImageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             iconImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconImageView.widthAnchor.constraint(equalToConstant: 60),
@@ -149,7 +162,7 @@ final class LCAppBannerRootView: UIView {
         bit32Badge.backgroundColor = UIColor(named: "32BitBadgeColor") ?? .systemBlue
 #endif
 
-        backgroundColor = dynamicColors
+        visualBackgroundView.backgroundColor = dynamicColors
             ? mainColor.withAlphaComponent(0.5)
             : (UIColor(named: "AppBannerBG") ?? .secondarySystemBackground)
         runControl.update(
@@ -398,5 +411,3 @@ final class LCAppBannerRunControl: UIControl {
         setNeedsLayout()
     }
 }
-
-

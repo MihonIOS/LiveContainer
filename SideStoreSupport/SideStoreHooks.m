@@ -106,41 +106,6 @@ void SideStoreMyAppsViewController_hook_escapeButtonTapped(UICollectionViewContr
 }
 
 
-@implementation UITabBarController(hook)
-
-- (void)hook_viewDidLoad {
-    [self hook_viewDidLoad];
-    
-    static char SideStoreVersionLabelKey;
-    if (objc_getAssociatedObject(self, &SideStoreVersionLabelKey)) {
-        return;
-    }
-
-    NSString* LCVersion = [NSString stringWithFormat:@"%@-%@",
-                         NSUserDefaults.lcMainBundle.infoDictionary[@"CFBundleShortVersionString"],
-                         NSUserDefaults.lcMainBundle.infoDictionary[@"LCVersionInfo"]];
-    
-    NSString* SSVersion = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-
-    UILabel* versionLabel = [UILabel new];
-    versionLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    versionLabel.font = [UIFont systemFontOfSize:9 weight:UIFontWeightRegular];
-    versionLabel.textColor = UIColor.secondaryLabelColor;
-    versionLabel.textAlignment = NSTextAlignmentCenter;
-    versionLabel.userInteractionEnabled = NO;
-    versionLabel.text = [NSString stringWithFormat:@"LC %@, SS %@", LCVersion, SSVersion];
-
-    [self.view addSubview:versionLabel];
-    [NSLayoutConstraint activateConstraints:@[
-        [versionLabel.centerXAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerXAnchor],
-        [versionLabel.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:13],
-    ]];
-    objc_setAssociatedObject(self, &SideStoreVersionLabelKey, versionLabel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-}
-
-@end
-
-
 void installSideStoreHooks(void) {
 
     swizzleClassMethod(NSBundle.class, @selector(baseAltStoreAppGroupID), @selector(hook_baseAltStoreAppGroupID));
@@ -158,9 +123,6 @@ void installSideStoreHooks(void) {
         SideStoreMyAppsViewController_orig_viewDidload = (void (*)(UICollectionViewController *, SEL))method_getImplementation(viewDidLoadMethod);
         method_setImplementation(viewDidLoadMethod, (IMP)SideStoreMyAppsViewController_hook_viewDidload);
         class_addMethod(PrivClass(MyAppsViewController), @selector(escapeButtonTapped:), (IMP)SideStoreMyAppsViewController_hook_escapeButtonTapped, "v@:@");
-        
-        // add version number
-        swizzle(UITabBarController.class, @selector(viewDidLoad), @selector(hook_viewDidLoad));
     }
     
 
