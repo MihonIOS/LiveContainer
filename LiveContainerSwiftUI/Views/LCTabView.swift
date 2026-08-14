@@ -19,7 +19,7 @@ struct LCTabView: View {
     @EnvironmentObject var sceneDelegate: SceneDelegate
     @State var shouldToggleMainWindowOpen = false
     @Environment(\.scenePhase) var scenePhase
-    @StateObject var downloadHelper = DownloadHelper.shared
+    private let downloadHelper = DownloadHelper.shared
 
     @StateObject var searchContextAppList = SearchContext()
     @StateObject var searchContextSource = SearchContext()
@@ -99,7 +99,6 @@ struct LCTabView: View {
                 }
             }
         }
-        .environmentObject(downloadHelper)
         .alert("lc.common.error".loc, isPresented: $errorShow){
             Button("lc.common.ok".loc, action: {
             })

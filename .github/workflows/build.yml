@@ -67,6 +67,31 @@ jobs:
         with:
           name: ${{ env.archive_path }}.xcarchive.tar
           path: ${{ env.archive_path }}.xcarchive.tar
+      - name: Checkout SideStore
+        uses: actions/checkout@v6
+        with:
+          repository: LiveContainer/SideStore
+          ref: LiveContainerSupport
+          path: SideStoreSource
+          submodules: recursive
+          fetch-depth: 1
+      - name: Patch and build SideStore
+        working-directory: SideStoreSource
+        run: |
+          PATCH="$GITHUB_WORKSPACE/.github/sidestore/rewrite-bg-task-identifiers.patch"
+          RESIGN_SOURCE="SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift"
+          if git apply --check "$PATCH"; then
+            git apply --whitespace=error-all "$PATCH"
+          elif grep -q "rewriteBackgroundTaskIdentifiers" "$RESIGN_SOURCE"; then
+            echo "SideStore already contains the background-task identifier rewrite."
+          else
+            echo "The SideStore patch no longer applies and no upstream replacement was found." >&2
+            exit 1
+          fi
+          git diff --check
+          brew install ldid xcbeautify
+          python3 scripts/ci/workflow.py build
+          test -f SideStore.ipa
       - name: Create IPA
         run: |
           sh .github/build_github.sh

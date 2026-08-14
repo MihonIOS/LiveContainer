@@ -1,0 +1,59 @@
+diff --git a/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift b/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift
+index c101217..2b6171e 100644
+--- a/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift
++++ b/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift
+@@ -155,12 +155,18 @@ final class ResignAppOperation: BasePipelineOperation<InstallAppOperationContext
+         guard var infoDictionary = bundle.completeInfoDictionary else {
+             throw ALTError(.missingInfoPlist)
+         }
+-        
+-        if let forcedBundleIdentifier = appexBundleIds[identifier] {
+-            infoDictionary[kCFBundleIdentifierKey as String] = forcedBundleIdentifier
+-        } else {
+-            infoDictionary[kCFBundleIdentifierKey as String] = profile.bundleIdentifier
+-        }
++
++        // SideStore changes the bundle identifier when it signs an app. Background-task
++        // identifiers are scoped to that bundle identifier, so keep their suffixes while
++        // moving the original bundle-ID prefix to the final signed bundle ID.
++        let originalBundleIdentifier = bundle.bundleIdentifier ?? identifier
++        let finalBundleIdentifier = appexBundleIds[identifier] ?? profile.bundleIdentifier
++        self.rewriteBackgroundTaskIdentifiers(
++            in: &infoDictionary,
++            from: originalBundleIdentifier,
++            to: finalBundleIdentifier
++        )
++        infoDictionary[kCFBundleIdentifierKey as String] = finalBundleIdentifier
+ 
+         infoDictionary[Bundle.Info.altBundleID] = identifier
+         infoDictionary[Bundle.Info.devicePairingString] = "<insert pairing file here>"
+@@ -204,6 +210,29 @@ final class ResignAppOperation: BasePipelineOperation<InstallAppOperationContext
+             self.verboseLog("[ResignAppOperation] Removed _CodeSignature folder at \(codeSignaturePath)")
+         }
+     }
++
++    private func rewriteBackgroundTaskIdentifiers(
++        in infoDictionary: inout [String: Any],
++        from originalBundleIdentifier: String,
++        to finalBundleIdentifier: String
++    ) {
++        guard originalBundleIdentifier != finalBundleIdentifier,
++              !originalBundleIdentifier.isEmpty,
++              let identifiers = infoDictionary["BGTaskSchedulerPermittedIdentifiers"] as? [String]
++        else {
++            return
++        }
++
++        let childPrefix = originalBundleIdentifier + "."
++        infoDictionary["BGTaskSchedulerPermittedIdentifiers"] = identifiers.map { identifier in
++            guard identifier == originalBundleIdentifier || identifier.hasPrefix(childPrefix) else {
++                return identifier
++            }
++
++            let suffix = identifier.dropFirst(originalBundleIdentifier.count)
++            return finalBundleIdentifier + String(suffix)
++        }
++    }
+     
+     private func resignAppBundle(at fileURL: URL, team: ALTTeam, certificate: ALTCertificate, profiles: [ALTProvisioningProfile]) async throws -> URL {
+         let signer = ALTSigner(team: team, certificate: certificate)

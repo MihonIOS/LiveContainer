@@ -10,8 +10,8 @@ import SwiftUI
 import UIKit
 import CryptoKit
 
-struct AltStoreSourceAppVersion: Identifiable, Hashable {
-    let id = UUID()
+struct AltStoreSourceAppVersion: @unchecked Sendable, Identifiable, Hashable {
+    var id: String { "\(version)|\(buildVersion ?? "")|\(downloadURL.absoluteString)" }
     let version: String
     let buildVersion: String?
     let releaseDate: Date?
@@ -20,8 +20,8 @@ struct AltStoreSourceAppVersion: Identifiable, Hashable {
     let size: Int64?
 }
 
-struct AltStoreSourceApp: Identifiable, Hashable {
-    let id = UUID()
+struct AltStoreSourceApp: @unchecked Sendable, Identifiable, Hashable {
+    var id: String { bundleIdentifier }
     let name: String
     let bundleIdentifier: String
     let developerName: String?
@@ -35,8 +35,8 @@ struct AltStoreSourceApp: Identifiable, Hashable {
     let isBeta: Bool
 }
 
-struct AltStoreSource: Identifiable, Hashable {
-    let id = UUID()
+struct AltStoreSource: @unchecked Sendable, Identifiable, Hashable {
+    var id: String { identifier ?? name }
     let name: String
     let identifier: String?
     let subtitle: String?
@@ -114,6 +114,8 @@ private struct AltStoreSourceAppVersionResponse: Decodable {
 
 @MainActor
 final class AltStoreSourcesViewModel: ObservableObject {
+    static let shared = AltStoreSourcesViewModel()
+
     struct SourceItem: Identifiable, Hashable {
         let id: URL
         let url: URL
@@ -154,12 +156,12 @@ final class AltStoreSourcesViewModel: ObservableObject {
     @Published var isRefreshingAll = false
     private let defaultsKey = "LCAltStoreSourceURLs"
 
-    private let cacheDirectoryName = "AltStoreSourceCache"
-    
     init() {
         loadStoredSources()
-        Task {
-            await refreshAllSources()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.loadCachedSources()
+            await self.refreshAllSources()
         }
     }
     
@@ -181,7 +183,10 @@ final class AltStoreSourcesViewModel: ObservableObject {
     func removeSource(_ item: SourceItem) {
         sources.removeAll { $0.id == item.id }
         persistSources()
-        removeCache(for: item.url)
+        let sourceURL = item.url
+        Task {
+            await AltStoreSourceCache.shared.removeData(for: sourceURL)
+        }
     }
     
     func refreshSource(_ item: SourceItem) async {
@@ -205,19 +210,21 @@ final class AltStoreSourcesViewModel: ObservableObject {
         }
         sources[index].isLoading = true
         sources[index].error = nil
-        let previousData = cachedData(for: url)
+        let previousData = await AltStoreSourceCache.shared.data(for: url)
         do {
-            let (source, data) = try await AltStoreSourceLoader.load(from: url)
-            guard let sourceIndex = sources.firstIndex(where: { $0.url == url }) else {
-                return
-            }
-            if let previousData, previousData == data {
+            let data = try await AltStoreSourceLoader.load(from: url)
+            if let previousData,
+               previousData == data,
+               let sourceIndex = sources.firstIndex(where: { $0.url == url }),
+               sources[sourceIndex].source != nil {
                 sources[sourceIndex].isLoading = false
                 return
             }
+            let source = try await AltStoreSourceLoader.decode(from: data, baseURL: url)
+            guard let sourceIndex = sources.firstIndex(where: { $0.url == url }) else { return }
             sources[sourceIndex].source = source
             sources[sourceIndex].isLoading = false
-            storeCache(data, for: url)
+            await AltStoreSourceCache.shared.store(data, for: url)
         } catch {
             if let sourceIndex = sources.firstIndex(where: { $0.url == url }) {
                 sources[sourceIndex].error = error.localizedDescription
@@ -231,12 +238,16 @@ final class AltStoreSourcesViewModel: ObservableObject {
         let stored = defaults.array(forKey: defaultsKey) as? [String] ?? []
         let urls = stored.compactMap { URL(string: $0) }
         self.sources = urls.map { SourceItem(url: $0, isLoading: false) }
-        for index in sources.indices {
-            let url = sources[index].url
-            if let data = cachedData(for: url),
-               let cachedSource = try? AltStoreSourceLoader.decode(from: data, baseURL: url) {
-                sources[index].source = cachedSource
+    }
+
+    private func loadCachedSources() async {
+        for url in sources.map({ $0.url }) {
+            guard let data = await AltStoreSourceCache.shared.data(for: url),
+                  let cachedSource = try? await AltStoreSourceLoader.decode(from: data, baseURL: url),
+                  let index = sources.firstIndex(where: { $0.url == url }) else {
+                continue
             }
+            sources[index].source = cachedSource
         }
     }
     
@@ -263,30 +274,39 @@ final class AltStoreSourcesViewModel: ObservableObject {
     }
 }
 
-private extension AltStoreSourcesViewModel {
-    func cachedData(for url: URL) -> Data? {
-        guard let fileURL = cacheFileURL(for: url) else { return nil }
+private actor AltStoreSourceCache {
+    static let shared = AltStoreSourceCache()
+
+    private let directoryName = "AltStoreSourceCache"
+
+    func data(for url: URL) -> Data? {
+        guard let fileURL = fileURL(for: url) else { return nil }
         return try? Data(contentsOf: fileURL)
     }
-    
-    func storeCache(_ data: Data, for url: URL) {
-        guard let fileURL = cacheFileURL(for: url) else { return }
+
+    func store(_ data: Data, for url: URL) {
+        guard let fileURL = fileURL(for: url) else { return }
         do {
             try data.write(to: fileURL, options: .atomic)
         } catch {
             // Ignore cache write errors
         }
     }
-    
-    func cacheFileURL(for url: URL) -> URL? {
-        guard let directory = ensureCacheDirectory() else { return nil }
-        let fileName = cacheFileName(for: url)
+
+    func removeData(for url: URL) {
+        guard let fileURL = fileURL(for: url) else { return }
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    private func fileURL(for url: URL) -> URL? {
+        guard let directory = cacheDirectory() else { return nil }
+        let fileName = Self.fileName(for: url)
         return directory.appendingPathComponent(fileName)
     }
-    
-    func ensureCacheDirectory() -> URL? {
+
+    private func cacheDirectory() -> URL? {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
-        let directory = caches.appendingPathComponent(cacheDirectoryName, isDirectory: true)
+        let directory = caches.appendingPathComponent(directoryName, isDirectory: true)
         if !FileManager.default.fileExists(atPath: directory.path) {
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -296,50 +316,50 @@ private extension AltStoreSourcesViewModel {
         }
         return directory
     }
-    
-    func cacheFileName(for url: URL) -> String {
+
+    private static func fileName(for url: URL) -> String {
         let data = Data(url.absoluteString.utf8)
         let digest = SHA256.hash(data: data)
         let hex = digest.map { String(format: "%02x", $0) }.joined()
         return "\(hex).json"
     }
-    
-    func removeCache(for url: URL) {
-        guard let fileURL = cacheFileURL(for: url) else { return }
-        do {
-            try FileManager.default.removeItem(at: fileURL)
-        } catch {
-            // Ignore cache removal errors
-        }
-    }
 }
 
 enum AltStoreSourceLoader {
-    static func load(from url: URL) async throws -> (AltStoreSource, Data) {
+    static func load(from url: URL) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(from: url)
         if let httpResponse = response as? HTTPURLResponse,
            !(200...299).contains(httpResponse.statusCode) {
             throw NSError(domain: "AltStoreSource", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode)"])
         }
-        let source = try decode(from: data, baseURL: url)
-        return (source, data)
+        return data
     }
     
-    static func decode(from data: Data, baseURL: URL) throws -> AltStoreSource {
-        try decodeSource(from: data, baseURL: baseURL)
+    static func decode(from data: Data, baseURL: URL) async throws -> AltStoreSource {
+        try await Task.detached(priority: .userInitiated) {
+            try Self.decodeSource(from: data, baseURL: baseURL)
+        }.value
     }
+
+    private static let isoDateFormatter = ISO8601DateFormatter()
+    private static let shortDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
     
     private static func decodeSource(from data: Data, baseURL: URL) throws -> AltStoreSource {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom({ decoder in
             let container = try decoder.singleValueContainer()
             let rawValue = try container.decode(String.self)
-            if let isoDate = ISO8601DateFormatter().date(from: rawValue) {
+            if let isoDate = isoDateFormatter.date(from: rawValue) {
                 return isoDate
             }
-            let shortFormatter = DateFormatter()
-            shortFormatter.dateFormat = "yyyy-MM-dd"
-            if let shortDate = shortFormatter.date(from: rawValue) {
+            if let shortDate = shortDateFormatter.date(from: rawValue) {
                 return shortDate
             }
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid date format: \(rawValue)")
@@ -426,12 +446,10 @@ enum AltStoreSourceLoader {
     
     private static func parseDate(_ value: String?) -> Date? {
         guard let value else { return nil }
-        if let isoDate = ISO8601DateFormatter().date(from: value) {
+        if let isoDate = isoDateFormatter.date(from: value) {
             return isoDate
         }
-        let shortFormatter = DateFormatter()
-        shortFormatter.dateFormat = "yyyy-MM-dd"
-        return shortFormatter.date(from: value)
+        return shortDateFormatter.date(from: value)
     }
     
     private static func url(for string: String?, baseURL: URL) -> URL? {
@@ -511,7 +529,7 @@ private extension View {
 }
 
 struct LCSourcesView: View {
-    @StateObject private var viewModel = AltStoreSourcesViewModel()
+    @ObservedObject private var viewModel = AltStoreSourcesViewModel.shared
     @State private var errorMessage: String?
     @State private var sourcePendingRemoval: AltStoreSourcesViewModel.SourceItem?
     @ObservedObject public var searchContext: SearchContext
@@ -526,7 +544,7 @@ struct LCSourcesView: View {
     @State private var downloadFlightTask: Task<Void, Never>?
     
     @EnvironmentObject private var sharedModel : SharedModel
-    @EnvironmentObject private var downloadHelper: DownloadHelper
+    private let downloadHelper = DownloadHelper.shared
     
     @State private var isViewAppeared = false
     
@@ -563,7 +581,7 @@ struct LCSourcesView: View {
                                 .animation(.easeInOut, value: apps.count)
                             }
                             
-                            if totalFilteredAppCount == 0 {
+                            if !hasFilteredApps {
                                 VStack(spacing: 8) {
                                     Text("lc.sources.section.noApps".loc)
                                         .foregroundStyle(.gray)
@@ -690,8 +708,8 @@ struct LCSourcesView: View {
                 isViewAppeared = true
             }
         }
-        .onChange(of: viewModel.sources) { newSources in
-            let newSet = Set(newSources.map { $0.id })
+        .onChange(of: viewModel.sources.map(\.id)) { newSourceIDs in
+            let newSet = Set(newSourceIDs)
             expandedSources = expandedSources.intersection(newSet)
         }
         .onChange(of: sharedModel.deepLink) { link in
@@ -702,37 +720,38 @@ struct LCSourcesView: View {
     }
     
     private var isFiltering: Bool {
-        !searchContext.debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !normalizedSearchQuery.isEmpty
     }
     
-    private var totalFilteredAppCount: Int {
-        viewModel.sources.reduce(0) { partialResult, item in
-            partialResult + filteredApps(for: item).count
+    private var hasFilteredApps: Bool {
+        if normalizedSearchQuery.isEmpty {
+            return viewModel.sources.contains { $0.source?.apps.isEmpty == false }
         }
+        return viewModel.sources.contains { item in
+            item.source?.apps.contains { appMatchesSearch($0, query: normalizedSearchQuery) } == true
+        }
+    }
+
+    private var normalizedSearchQuery: String {
+        searchContext.debouncedQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
     }
     
     private func filteredApps(for item: AltStoreSourcesViewModel.SourceItem) -> [AltStoreSourceApp] {
         guard let source = item.source else { return [] }
-        let query = searchContext.debouncedQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = normalizedSearchQuery
         guard !query.isEmpty else {
             return source.apps
         }
-        return source.apps.filter { app in
-            let lower = query.lowercased()
-            if app.name.lowercased().contains(lower) {
-                return true
-            }
-            if app.bundleIdentifier.lowercased().contains(lower) {
-                return true
-            }
-            if let developer = app.developerName?.lowercased(), developer.contains(lower) {
-                return true
-            }
-            if let subtitle = app.subtitle?.lowercased(), subtitle.contains(lower) {
-                return true
-            }
-            return false
-        }
+        return source.apps.filter { appMatchesSearch($0, query: query) }
+    }
+
+    private func appMatchesSearch(_ app: AltStoreSourceApp, query: String) -> Bool {
+        app.name.localizedCaseInsensitiveContains(query) ||
+            app.bundleIdentifier.localizedCaseInsensitiveContains(query) ||
+            app.developerName?.localizedCaseInsensitiveContains(query) == true ||
+            app.subtitle?.localizedCaseInsensitiveContains(query) == true
     }
     
     @MainActor

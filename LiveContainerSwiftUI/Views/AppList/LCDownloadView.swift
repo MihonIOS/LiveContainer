@@ -79,6 +79,9 @@ public final class DownloadHelper: NSObject, ObservableObject {
     private var registeredContinuedTaskIdentifiers = Set<String>()
     private var lastPersistDates: [UUID: Date] = [:]
     private var lastContinuedTaskUpdateDates: [UUID: Date] = [:]
+    private var lastProgressPublishDates: [UUID: Date] = [:]
+
+    private let progressPublishInterval: TimeInterval = 0.1
 
     private let megabyteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
@@ -185,6 +188,7 @@ public final class DownloadHelper: NSObject, ObservableObject {
         guard let task = activeTasks[id] else {
             downloads[index].status = .paused
             downloads[index].updatedAt = Date()
+            lastProgressPublishDates.removeValue(forKey: id)
             persistState()
             finishContinuedTask(id: id)
             return
@@ -193,6 +197,7 @@ public final class DownloadHelper: NSObject, ObservableObject {
         pauseRequests.insert(id)
         downloads[index].status = .paused
         downloads[index].updatedAt = Date()
+        lastProgressPublishDates.removeValue(forKey: id)
         persistState()
         finishContinuedTask(id: id)
 
@@ -225,6 +230,7 @@ public final class DownloadHelper: NSObject, ObservableObject {
         downloads[index].errorDescription = nil
         downloads[index].continuedTaskIdentifier = continuedTaskIdentifier()
         downloads[index].updatedAt = Date()
+        lastProgressPublishDates.removeValue(forKey: id)
         persistState()
         startDownload(id: id, resumeData: data, submitContinuedTask: true)
     }
@@ -240,6 +246,7 @@ public final class DownloadHelper: NSObject, ObservableObject {
         downloads[index].taskIdentifier = nil
         downloads[index].errorDescription = nil
         downloads[index].updatedAt = Date()
+        lastProgressPublishDates.removeValue(forKey: id)
         persistState()
         finishContinuedTask(id: id)
     }
@@ -339,12 +346,14 @@ public final class DownloadHelper: NSObject, ObservableObject {
         guard let index = index(of: id), downloads[index].status != .downloading && downloads[index].status != .installing else { return }
         removeLocalFile(for: downloads[index])
         downloads.remove(at: index)
+        lastProgressPublishDates.removeValue(forKey: id)
         persistState()
     }
 
     func clearFinished() {
         let removable = downloads.filter { $0.status == .installed || $0.status == .cancelled }
         removable.forEach(removeLocalFile)
+        removable.forEach { lastProgressPublishDates.removeValue(forKey: $0.id) }
         downloads.removeAll { $0.status == .installed || $0.status == .cancelled }
         persistState()
     }
@@ -609,12 +618,19 @@ extension DownloadHelper: URLSessionDownloadDelegate, URLSessionDelegate {
               let id = UUID(uuidString: description),
               let index = index(of: id), downloads[index].status == .downloading else { return }
 
-        downloads[index].downloadedSize = totalBytesWritten
-        downloads[index].totalSize = max(totalBytesExpectedToWrite, 0)
-        downloads[index].updatedAt = Date()
+        let now = Date()
+        guard now.timeIntervalSince(lastProgressPublishDates[id] ?? .distantPast) >= progressPublishInterval else {
+            return
+        }
+        lastProgressPublishDates[id] = now
+
+        var item = downloads[index]
+        item.downloadedSize = totalBytesWritten
+        item.totalSize = max(totalBytesExpectedToWrite, 0)
+        item.updatedAt = now
+        downloads[index] = item
         updateContinuedTaskProgress(id: id)
 
-        let now = Date()
         if now.timeIntervalSince(lastPersistDates[id] ?? .distantPast) >= 1 {
             lastPersistDates[id] = now
             persistState()
@@ -653,6 +669,7 @@ extension DownloadHelper: URLSessionDownloadDelegate, URLSessionDelegate {
             downloads[index].resumeData = nil
             downloads[index].errorDescription = nil
             downloads[index].updatedAt = Date()
+            lastProgressPublishDates.removeValue(forKey: id)
             persistState()
             updateContinuedTaskProgress(id: id, forceUpdate: true)
             finishContinuedTask(id: id)
@@ -686,6 +703,7 @@ extension DownloadHelper: URLSessionDownloadDelegate, URLSessionDelegate {
         activeTasks.removeValue(forKey: id)
         downloads[index].errorDescription = description
         downloads[index].updatedAt = Date()
+        lastProgressPublishDates.removeValue(forKey: id)
         persistState()
         finishContinuedTask(id: id)
         sendNotification(title: "Download failed", body: "\(downloads[index].displayName): \(description)")
