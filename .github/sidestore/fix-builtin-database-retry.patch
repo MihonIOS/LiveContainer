@@ -33,6 +33,20 @@ index 1768e90..36cc694 100644
                  }
              }
          }
+@@ -312,13 +322,6 @@ public extension DatabaseManager
+         context.performAndWait {
+             do
+             {
+                 guard let localAppBundle = ALTApplication(fileURL: Bundle.Info.activeBundleURL) else { return }
+-                
+-                #if !targetEnvironment(simulator)
+-                guard localAppBundle.provisioningProfile != nil else {
+-                    completionHandler(.failure(ALTError(.invalidApp)))
+-                    return
+-                }
+-                #endif
+                 
+                 let altStoreSource: Source
 diff --git a/AltStore/Core/Model/InstalledApp.swift b/AltStore/Core/Model/InstalledApp.swift
 index 5f5d4c0..7c987d1 100644
 --- a/AltStore/Core/Model/InstalledApp.swift
