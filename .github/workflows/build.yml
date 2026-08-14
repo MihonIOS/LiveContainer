@@ -93,6 +93,11 @@ jobs:
           DATABASE_SOURCE="AltStore/Core/Model/DatabaseManager/DatabaseManager.swift"
           APP_SOURCE="AltStore/Core/Model/InstalledApp.swift"
           EXTENSION_SOURCE="AltStore/Core/Model/InstalledExtension.swift"
+          BUNDLE_SOURCE="Shared/Extensions/Bundle+AltStore.swift"
+          if ! grep -q 'dynamic static let activeBundle' "$BUNDLE_SOURCE"; then
+            echo "SideStore no longer exposes the activeBundle hook expected by LiveContainer." >&2
+            exit 1
+          fi
           if git apply --check "$COMPAT_PATCH"; then
             git apply --whitespace=error-all "$COMPAT_PATCH"
           elif grep -q "prepareLoadedDatabase" "$DATABASE_SOURCE" &&
