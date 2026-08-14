@@ -1,0 +1,75 @@
+diff --git a/AltStore/Core/Model/DatabaseManager/DatabaseManager.swift b/AltStore/Core/Model/DatabaseManager/DatabaseManager.swift
+index 1768e90..36cc694 100644
+--- a/AltStore/Core/Model/DatabaseManager/DatabaseManager.swift
++++ b/AltStore/Core/Model/DatabaseManager/DatabaseManager.swift
+@@ -191,17 +191,27 @@ public extension DatabaseManager
+                 {
+                 case .failure(let error): finish(error)
+                 case .success:
+-                    self.persistentContainer.loadPersistentStores { (description, error) in
+-                        guard error == nil else { return finish(error!) }
+-                        
++                    func prepareLoadedDatabase()
++                    {
+                         self.prepareDatabase() { (result) in
+                             switch result
+                             {
+                             case .failure(let error): finish(error)
+                             case .success: finish(nil)
+                             }
+                         }
+                     }
++
++                    // prepareDatabase() can fail after the persistent store has loaded. In that
++                    // case, retry only the preparation step instead of adding the same store again.
++                    guard self.persistentContainer.persistentStoreCoordinator.persistentStores.isEmpty else {
++                        return prepareLoadedDatabase()
++                    }
++
++                    self.persistentContainer.loadPersistentStores { (description, error) in
++                        guard error == nil else { return finish(error!) }
++                        prepareLoadedDatabase()
++                    }
+                 }
+             }
+         }
+diff --git a/AltStore/Core/Model/InstalledApp.swift b/AltStore/Core/Model/InstalledApp.swift
+index 5f5d4c0..7c987d1 100644
+--- a/AltStore/Core/Model/InstalledApp.swift
++++ b/AltStore/Core/Model/InstalledApp.swift
+@@ -195,8 +195,13 @@ public class InstalledApp: BaseEntity, InstalledAppProtocol
+         #if targetEnvironment(simulator)
+         self.expirationDate = self.refreshedDate.addingTimeInterval(60 * 60 * 24 * 7)
+         #else
+-        guard let expirationDate = resignedAppBundle.provisioningProfile?.expirationDate else {
+-            throw ALTError.invalidApp(reason: "The app is missing a valid provisioning profile.")
++        let expirationDate: Date
++        if let profileExpirationDate = resignedAppBundle.provisioningProfile?.expirationDate {
++            expirationDate = profileExpirationDate
++        } else {
++            // A SideStore executable embedded in LiveContainer does not retain its nested profile.
++            expirationDate = self.refreshedDate
++            debugLog("The app is missing a valid provisioning profile.")
+         }
+         self.expirationDate = expirationDate
+         #endif
+diff --git a/AltStore/Core/Model/InstalledExtension.swift b/AltStore/Core/Model/InstalledExtension.swift
+index e02672f..ee62680 100644
+--- a/AltStore/Core/Model/InstalledExtension.swift
++++ b/AltStore/Core/Model/InstalledExtension.swift
+@@ -45,8 +45,13 @@ public class InstalledExtension: BaseEntity, InstalledAppProtocol
+         #if targetEnvironment(simulator)
+         self.expirationDate = self.refreshedDate.addingTimeInterval(60 * 60 * 24 * 7)
+         #else
+-        guard let expirationDate = resignedAppExtensionBundle.provisioningProfile?.expirationDate else {
+-            throw ALTError.invalidApp(reason: "The app extension is missing a valid provisioning profile.")
++        let expirationDate: Date
++        if let profileExpirationDate = resignedAppExtensionBundle.provisioningProfile?.expirationDate {
++            expirationDate = profileExpirationDate
++        } else {
++            // Built-in extensions can be packaged without their original nested profile.
++            expirationDate = self.refreshedDate.addingTimeInterval(60 * 60 * 24 * 7)
++            debugLog("The app extension is missing a valid provisioning profile.")
+         }
+         self.expirationDate = expirationDate
+         #endif

@@ -88,6 +88,21 @@ jobs:
             echo "The SideStore patch no longer applies and no upstream replacement was found." >&2
             exit 1
           fi
+
+          COMPAT_PATCH="$GITHUB_WORKSPACE/.github/sidestore/fix-builtin-database-retry.patch"
+          DATABASE_SOURCE="AltStore/Core/Model/DatabaseManager/DatabaseManager.swift"
+          APP_SOURCE="AltStore/Core/Model/InstalledApp.swift"
+          EXTENSION_SOURCE="AltStore/Core/Model/InstalledExtension.swift"
+          if git apply --check "$COMPAT_PATCH"; then
+            git apply --whitespace=error-all "$COMPAT_PATCH"
+          elif grep -q "prepareLoadedDatabase" "$DATABASE_SOURCE" &&
+               ! grep -q 'throw ALTError.invalidApp(reason: "The app is missing a valid provisioning profile.")' "$APP_SOURCE" &&
+               ! grep -q 'throw ALTError.invalidApp(reason: "The app extension is missing a valid provisioning profile.")' "$EXTENSION_SOURCE"; then
+            echo "SideStore already contains the built-in database and provisioning-profile fixes."
+          else
+            echo "The built-in SideStore compatibility patch no longer applies." >&2
+            exit 1
+          fi
           git diff --check
           brew install ldid xcbeautify
           python3 scripts/ci/workflow.py build
